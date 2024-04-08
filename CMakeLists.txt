@@ -19,10 +19,7 @@ find_package(MPI REQUIRED)
 
 FetchContent_Declare(
   Eigen
-  GIT_REPOSITORY https://gitlab.com/libeigen/eigen.git
-  GIT_TAG master
-  GIT_SHALLOW TRUE
-  GIT_PROGRESS TRUE
+  URL https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.tar.gz
 )
 
 FetchContent_Declare(
@@ -45,31 +42,7 @@ set(AUTODIFF_BUILD_EXAMPLES OFF)
 
 FetchContent_MakeAvailable(Eigen autodiff)
 
-# FetchContent_Declare(
-#   taco
-#   GIT_REPOSITORY https://github.com/tensor-compiler/taco.git
-#   GIT_TAG master
-# )
-
-# FetchContent_MakeAvailable(taco)
-# target_include_directories(taco PUBLIC ${taco_BINARY_DIR}/include)
-
-# if (CMAKE_BUILD_TYPE STREQUAL "Debug")
-#     set(MFEM_FOLDER "build-debug")
-# else()
-#     set(MFEM_FOLDER "build-release")
-# endif()
-
-# find_path(TACO_INCLUDE_DIR REQUIRED NAMES taco.h HINTS ${CMAKE_BINARY_DIR}/_deps/taco-src/include)
-
-# find_library(TACO_LIB REQUIRED NAMES taco libtaco HINTS ${CMAKE_BINARY_DIR}/lib/libtaco.so)
-
-set(MFEM_DIR "" CACHE PATH "Path to the mfem library.")
-
-find_package(mfem EXACT REQUIRED NAMES MFEM PATHS ${MFEM_DIR})
-
-set(TACO_DIR "" CACHE PATH "Path to the taco library.")
-
+find_package(MFEM EXACT REQUIRED)
 add_library(taco SHARED IMPORTED) # or STATIC instead of SHARED
 set_target_properties(taco PROPERTIES
   IMPORTED_LOCATION "${TACO_DIR}/lib/libtaco.so"

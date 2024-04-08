@@ -105,61 +105,62 @@ TEST( autodiff, dual_vs_double )
     EXPECT_NEAR( ( T1 - T2 ).norm() / T2.norm(), 0, 1e-13 );
 }
 
-// compare the difference between using dual as constant and using double as constant
-TEST( autodiff, eigen_value_derivatives_Eigen_VS_CloseForm )
-{
-    // eigenvalue from Eigen
-    auto eigenvalue1 = []( const auto& strainVec )
-    {
-        using T = typename std::decay_t<decltype( strainVec( 0 ) )>;
-        auto strainTensor = util::InverseVoigt( strainVec, true );
-        auto eigenValues = strainTensor.eigenvalues();
-        Eigen::Matrix<T, 3, 1> eval;
-        eval << eigenValues( 0 ).real(), eigenValues( 1 ).real(), eigenValues( 2 ).real();
-        std::sort( std::begin( eval ), std::end( eval ), std::less<T>() );
-        return eval;
-    };
+// https://github.com/autodiff/autodiff/issues/191
+// // compare the difference between using dual as constant and using double as constant
+// TEST( autodiff, eigen_value_derivatives_Eigen_VS_CloseForm )
+// {
+//     // eigenvalue from Eigen
+//     auto eigenvalue1 = []( const auto& strainVec )
+//     {
+//         using T = typename std::decay_t<decltype( strainVec( 0 ) )>;
+//         auto strainTensor = util::InverseVoigt( strainVec, true );
+//         auto eigenValues = strainTensor.eigenvalues();
+//         Eigen::Matrix<T, 3, 1> eval;
+//         eval << eigenValues( 0 ).real(), eigenValues( 1 ).real(), eigenValues( 2 ).real();
+//         std::sort( std::begin( eval ), std::end( eval ), std::less<T>() );
+//         return eval;
+//     };
 
-    // eigenvalue from Closed Form
-    auto eigenvalue2 = []( const auto& strainVec )
-    {
-        using T = typename std::decay_t<decltype( strainVec( 0 ) )>;
-        Eigen::Matrix<T, 3, 1> eval;
-        Eigen::Matrix<T, 3, 3> evec;
-        gte::NISymmetricEigensolver3x3<T> eig;
+//     // eigenvalue from Closed Form
+//     auto eigenvalue2 = []( const auto& strainVec )
+//     {
+//         using T = typename std::decay_t<decltype( strainVec( 0 ) )>;
+//         Eigen::Matrix<T, 3, 1> eval;
+//         Eigen::Matrix<T, 3, 3> evec;
+//         gte::NISymmetricEigensolver3x3<T> eig;
 
-        eig( strainVec( 0 ), strainVec( 3 ) / 2, strainVec( 5 ) / 2, strainVec( 1 ), strainVec( 4 ) / 2, strainVec( 2 ),
-             1, eval, evec );
+//         eig( strainVec( 0 ), strainVec( 3 ) / 2, strainVec( 5 ) / 2, strainVec( 1 ), strainVec( 4 ) / 2, strainVec( 2 ),
+//              1, eval, evec );
 
-        return eval;
-    };
+//         return eval;
+//     };
 
-    std::random_device rd;
-    std::mt19937 generator( rd() ); // here you could also set a seed
-    std::uniform_real_distribution<double> distribution( -1.E6, 1.E6 );
+//     std::random_device rd;
+//     std::mt19937 generator( rd() ); // here you could also set a seed
+//     std::uniform_real_distribution<double> distribution( -1.E6, 1.E6 );
 
-    autodiff::Vector6dual2nd strain{ distribution( generator ), distribution( generator ), distribution( generator ),
-                                     distribution( generator ), distribution( generator ), distribution( generator ) };
+//     autodiff::Vector6dual2nd strain{ distribution( generator ), distribution( generator ), distribution( generator ),
+//                                      distribution( generator ), distribution( generator ), distribution( generator ) };
 
-    auto eig1 = eigenvalue1( strain );
-    auto eig2 = eigenvalue2( strain );
-    EXPECT_NEAR( autodiff::detail::val( ( eig1 - eig2 ).norm() / eig2.norm() ), 0, 1e-13 );
+//     auto eig1 = eigenvalue1( strain );
+//     auto eig2 = eigenvalue2( strain );
+//     EXPECT_NEAR( autodiff::detail::val( ( eig1 - eig2 ).norm() / eig2.norm() ), 0, 1e-13 );
 
-    autodiff::dual2nd pi = 3.141592;
+//     autodiff::dual2nd pi = 3.141592;
 
-    autodiff::VectorXdual2nd F; // the output vector F = f(x, p, q) evaluated together with Jacobian below
+//     autodiff::VectorXdual2nd F; // the output vector F = f(x, p, q) evaluated together with Jacobian below
 
-    Eigen::MatrixXd Jx1 = autodiff::jacobian( eigenvalue1, wrt( strain ), at( strain ),
-                                              F ); // evaluate the function and the Jacobian matrix J\Lambda = d\Lambda/dE
+//     Eigen::MatrixXd Jx1 = autodiff::jacobian( eigenvalue1, wrt( strain ), at( strain ),
+//                                               F ); // evaluate the function and the Jacobian matrix J\Lambda = d\Lambda/dE
 
-    Eigen::MatrixXd Jx2 = autodiff::jacobian( eigenvalue2, wrt( strain ), at( strain ),
-                                              F ); // evaluate the function and the Jacobian matrix  J\Lambda = d\Lambda/dE
-    //   compare jacobian
-    for ( int i = 0; i < 6; i++ )
-    {
-        EXPECT_NEAR( autodiff::detail::val( ( Jx1.col( i ) - Jx2.col( i ) ).norm() / Jx2.col( i ).norm() ), 0, 1e-12 );
-    }
-}
+//     Eigen::MatrixXd Jx2 = autodiff::jacobian( eigenvalue2, wrt( strain ), at( strain ),
+//                                               F ); // evaluate the function and the Jacobian matrix  J\Lambda = d\Lambda/dE
+//     //   compare jacobian
+//     for ( int i = 0; i < 6; i++ )
+//     {
+//         EXPECT_NEAR( autodiff::detail::val( ( Jx1.col( i ) - Jx2.col( i ) ).norm() / Jx2.col( i ).norm() ), 0, 1e-12 );
+//     }
+// }
 
 // compare the difference between using dual as constant and using double as constant
 TEST( autodiff, eigen_value_derivatives_Iterative_VS_CloseForm )

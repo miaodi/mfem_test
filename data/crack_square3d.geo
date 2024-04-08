@@ -22,6 +22,18 @@ Plane Surface(1) = {1};
 
 Extrude {0, 0, 1e-3}{ Surface {1}; }
 
+
+
+
+Physical Surface("bot", 11) = {19};
+Physical Surface("top", 12) = {27};
+Physical Surface("right", 13) = {23};
+Physical Surface("left top", 14) = {31};
+Physical Surface("left bot", 15) = {43};
+Physical Surface("crack_bot", 16) = {39};
+Physical Surface("crack_top", 17) = {35};
+
+
 Mesh 3;
 Mesh.Algorithm = 8; // Delaunay for quads
 Mesh.MshFileVersion = 2.2;

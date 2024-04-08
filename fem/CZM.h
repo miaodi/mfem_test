@@ -19,11 +19,13 @@ class CZMIntegrator : public NonlinearFormIntegratorLambda
 protected:
     struct PointData
     {
-        PointData( const double delta_n, const double delta_t ) : delta_n_prev( delta_n ), delta_t_prev( delta_t )
+        PointData( const double delta_n, const double delta_t1, const double delta_t2 )
+            : delta_n_prev( delta_n ), delta_t1_prev( delta_t1 ), delta_t2_prev( delta_t2 )
         {
         }
         double delta_n_prev{ 0. };
-        double delta_t_prev{ 0. };
+        double delta_t1_prev{ 0. };
+        double delta_t2_prev{ 0. };
     };
 
 public:
@@ -61,7 +63,7 @@ public:
     }
 
 protected:
-    void Update( const int gauss, const double delta_n, const double delta_t );
+    void Update( const int gauss, const double delta_n, const double delta_t1, const double delta_t2 = 0. );
 
 protected:
     Memorize& mMemo;
@@ -125,7 +127,6 @@ public:
     virtual void TractionStiffTangent( const Eigen::VectorXd& Delta, const int gauss, const int dim, Eigen::MatrixXd& H ) const;
 
 protected:
-    void DeltaToTNMat( const mfem::DenseMatrix& Jacobian, const int dim, Eigen::MatrixXd& DeltaToTN ) const;
 
     double mSigmaMax{ 0. };
     double mTauMax{ 0. };
@@ -217,4 +218,6 @@ public:
                           const mfem::DenseMatrix& gshape2,
                           const int dim );
 };
+
+void DeltaToTNMat( const mfem::DenseMatrix& Jacobian, Eigen::MatrixXd& DeltaToTN );
 } // namespace plugin

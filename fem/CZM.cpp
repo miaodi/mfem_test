@@ -129,17 +129,18 @@ void CZMIntegrator::matrixB( const int dof1,
     }
 }
 
-void CZMIntegrator::Update( const int gauss, const double delta_n, const double delta_t )
+void CZMIntegrator::Update( const int gauss, const double delta_n, const double delta_t1, const double delta_t2 )
 {
     auto& pd = mMemo.GetFacePointData( gauss );
     // historical strain energy+ for KKT condition
     if ( !pd.get_val<PointData>( "delta" ).has_value() )
-        pd.set_val<PointData>( "delta", std::move( PointData( delta_n, delta_t ) ) );
+        pd.set_val<PointData>( "delta", std::move( PointData( delta_n, delta_t1, delta_t2 ) ) );
     else
     {
         auto& delta_data = pd.get_val<PointData>( "delta" ).value().get();
         delta_data.delta_n_prev = delta_n;
-        delta_data.delta_t_prev = delta_t;
+        delta_data.delta_t1_prev = delta_t1;
+        delta_data.delta_t2_prev = delta_t2;
     }
 }
 
@@ -220,35 +221,12 @@ void LinearCZMIntegrator::TractionStiffTangent( const Eigen::VectorXd& Delta, co
     }
 }
 
-void ExponentialCZMIntegrator::DeltaToTNMat( const mfem::DenseMatrix& Jacobian, const int dim, Eigen::MatrixXd& DeltaToTN ) const
-{
-    DeltaToTN.resize( dim, dim );
-    if ( dim == 2 )
-    {
-        Eigen::Map<const Eigen::Matrix<double, 2, 1>> Jac( Jacobian.Data() );
-        static Eigen::Rotation2Dd rot( EIGEN_PI / 2 );
-        DeltaToTN.col( 0 ) = Jac;
-        DeltaToTN.col( 0 ).normalize();
-        DeltaToTN.col( 1 ) = rot.toRotationMatrix() * DeltaToTN.col( 0 );
-    }
-    else if ( dim == 3 )
-    {
-        Eigen::Map<const Eigen::Matrix<double, 3, 2>> Jac( Jacobian.Data() );
-        DeltaToTN.col( 0 ) = Jac.col( 0 );
-        DeltaToTN.col( 0 ).normalize();
-        DeltaToTN.col( 2 ) = Jac.col( 1 ).cross( Jac.col( 0 ) );
-        DeltaToTN.col( 2 ).normalize();
-        Eigen::Map<const Eigen::Matrix<double, 3, 3>> DeltaToTN33( DeltaToTN.data() );
-        DeltaToTN.col( 1 ) = DeltaToTN33.col( 2 ).cross( DeltaToTN33.col( 0 ) );
-    }
-}
-
 void ExponentialCZMIntegrator::Traction( const Eigen::VectorXd& Delta, const int i, const int dim, Eigen::VectorXd& T ) const
 {
     double q = mPhiT / mPhiN;
     double r = 0.;
     Eigen::MatrixXd DeltaToTN;
-    DeltaToTNMat( mMemo.GetFaceJacobian( i ), dim, DeltaToTN );
+    DeltaToTNMat( mMemo.GetFaceJacobian( i ), DeltaToTN );
     Eigen::VectorXd DeltaRot = DeltaToTN.transpose() * Delta;
     if ( dim == 2 )
     {
@@ -291,7 +269,7 @@ void ExponentialCZMIntegrator::TractionStiffTangent( const Eigen::VectorXd& Delt
     double q = mPhiT / mPhiN;
     double r = 0.;
     Eigen::MatrixXd DeltaToTN;
-    DeltaToTNMat( mMemo.GetFaceJacobian( i ), dim, DeltaToTN );
+    DeltaToTNMat( mMemo.GetFaceJacobian( i ), DeltaToTN );
     Eigen::VectorXd DeltaRot = DeltaToTN.transpose() * Delta;
     if ( dim == 2 )
     {
@@ -401,45 +379,73 @@ void ExponentialADCZMIntegrator::EvalCZMLaw( mfem::ElementTransformation& Tr, co
 
 ExponentialADCZMIntegrator::ExponentialADCZMIntegrator(
     Memorize& memo, mfem::Coefficient& sigmaMax, mfem::Coefficient& tauMax, mfem::Coefficient& deltaN, mfem::Coefficient& deltaT )
-    : ADCZMIntegrator( memo ), mSigmaMax{&sigmaMax}, mTauMax{&tauMax}, mDeltaN{&deltaN}, mDeltaT{&deltaT}
+    : ADCZMIntegrator( memo ), mSigmaMax{ &sigmaMax }, mTauMax{ &tauMax }, mDeltaN{ &deltaN }, mDeltaT{ &deltaT }
 {
     // x: diffX, diffY
-    potential = [this]( const autodiff::VectorXdual2nd& x, const int i ) {
+    potential = [this]( const autodiff::VectorXdual2nd& x, const int i )
+    {
         const auto& Jacobian = this->mMemo.GetFaceJacobian( i );
+        const int dim = Jacobian.Height();
         const auto& pd = this->mMemo.GetFacePointData( i );
 
-        autodiff::VectorXdual2nd dA1( 2 );
-        dA1 << Jacobian( 0, 0 ), Jacobian( 1, 0 );
         const autodiff::dual2nd q = mCZMLawConst.phi_t / mCZMLawConst.phi_n;
         const autodiff::dual2nd r = 0.;
+        Eigen::MatrixXd DeltaToTN;
+        DeltaToTNMat( Jacobian, DeltaToTN );
 
-        autodiff::VectorXdual2nd directionT = dA1;
-        directionT.normalize();
-
-        static Eigen::Rotation2Dd rot( EIGEN_PI / 2 );
-        autodiff::VectorXdual2nd directionN = rot.toRotationMatrix() * directionT;
-        const autodiff::dual2nd DeltaT = directionT.dot( x );
-        const autodiff::dual2nd DeltaN = directionN.dot( x );
-
-        if ( mIterAux->IterNumber() == 0 )
+        if ( dim == 2 )
         {
-            Update( i, autodiff::detail::val( DeltaN ), autodiff::detail::val( DeltaT ) );
+            const autodiff::dual2nd DeltaT = DeltaToTN.col( 0 ).dot( x );
+            const autodiff::dual2nd DeltaN = DeltaToTN.col( 1 ).dot( x );
+
+            if ( mIterAux->IterNumber() == 0 )
+            {
+                Update( i, autodiff::detail::val( DeltaN ), autodiff::detail::val( DeltaT ) );
+            }
+
+            const auto& delta_data = pd.get_val<PointData>( "delta" ).value().get();
+
+            autodiff::dual2nd res =
+                mCZMLawConst.phi_n +
+                mCZMLawConst.phi_n * autodiff::detail::exp( -DeltaN / mCZMLawConst.delta_n ) *
+                    ( ( autodiff::dual2nd( 1. ) - r + DeltaN / mCZMLawConst.delta_n ) *
+                          ( autodiff::dual2nd( 1. ) - q ) / ( r - autodiff::dual2nd( 1. ) ) -
+                      ( q + ( r - q ) / ( r - autodiff::dual2nd( 1. ) ) * DeltaN / mCZMLawConst.delta_n ) *
+                          autodiff::detail::exp( -DeltaT * DeltaT / mCZMLawConst.delta_t / mCZMLawConst.delta_t ) ) +
+                xi_n * ( DeltaN - delta_data.delta_n_prev ) * ( DeltaN - delta_data.delta_n_prev ) /
+                    mCZMLawConst.delta_n / mIterAux->GetDeltaLambda() +
+                xi_t * ( DeltaT - delta_data.delta_t1_prev ) * ( DeltaT - delta_data.delta_t1_prev ) /
+                    mCZMLawConst.delta_t / mIterAux->GetDeltaLambda();
+            return res;
         }
+        else
+        {
+            const autodiff::dual2nd DeltaT1 = DeltaToTN.col( 0 ).dot( x );
+            const autodiff::dual2nd DeltaT2 = DeltaToTN.col( 1 ).dot( x );
+            const autodiff::dual2nd DeltaN = DeltaToTN.col( 2 ).dot( x );
 
-        const auto& delta_data = pd.get_val<PointData>( "delta" ).value().get();
+            if ( mIterAux->IterNumber() == 0 )
+            {
+                Update( i, autodiff::detail::val( DeltaN ), autodiff::detail::val( DeltaT1 ), autodiff::detail::val( DeltaT2 ) );
+            }
 
-        autodiff::dual2nd res =
-            mCZMLawConst.phi_n +
-            mCZMLawConst.phi_n * autodiff::detail::exp( -DeltaN / mCZMLawConst.delta_n ) *
-                ( ( autodiff::dual2nd( 1. ) - r + DeltaN / mCZMLawConst.delta_n ) * ( autodiff::dual2nd( 1. ) - q ) /
-                      ( r - autodiff::dual2nd( 1. ) ) -
-                  ( q + ( r - q ) / ( r - autodiff::dual2nd( 1. ) ) * DeltaN / mCZMLawConst.delta_n ) *
-                      autodiff::detail::exp( -DeltaT * DeltaT / mCZMLawConst.delta_t / mCZMLawConst.delta_t ) ) +
-            xi_n * ( DeltaN - delta_data.delta_n_prev ) * ( DeltaN - delta_data.delta_n_prev ) / mCZMLawConst.delta_n /
-                mIterAux->GetDeltaLambda() +
-            xi_t * ( DeltaT - delta_data.delta_t_prev ) * ( DeltaT - delta_data.delta_t_prev ) / mCZMLawConst.delta_t /
-                mIterAux->GetDeltaLambda();
-        return res;
+            const auto& delta_data = pd.get_val<PointData>( "delta" ).value().get();
+
+            autodiff::dual2nd res = mCZMLawConst.phi_n +
+                                    mCZMLawConst.phi_n * autodiff::detail::exp( -DeltaN / mCZMLawConst.delta_n ) *
+                                        ( ( autodiff::dual2nd( 1. ) - r + DeltaN / mCZMLawConst.delta_n ) *
+                                              ( autodiff::dual2nd( 1. ) - q ) / ( r - autodiff::dual2nd( 1. ) ) -
+                                          ( q + ( r - q ) / ( r - autodiff::dual2nd( 1. ) ) * DeltaN / mCZMLawConst.delta_n ) *
+                                              autodiff::detail::exp( -( DeltaT1 * DeltaT1 + DeltaT2 * DeltaT2 ) /
+                                                                     mCZMLawConst.delta_t / mCZMLawConst.delta_t ) ) +
+                                    xi_n * ( DeltaN - delta_data.delta_n_prev ) * ( DeltaN - delta_data.delta_n_prev ) /
+                                        mCZMLawConst.delta_n / mIterAux->GetDeltaLambda() +
+                                    xi_t * ( DeltaT1 - delta_data.delta_t1_prev ) * ( DeltaT1 - delta_data.delta_t1_prev ) /
+                                        mCZMLawConst.delta_t / mIterAux->GetDeltaLambda() +
+                                    xi_t * ( DeltaT2 - delta_data.delta_t2_prev ) * ( DeltaT2 - delta_data.delta_t2_prev ) /
+                                        mCZMLawConst.delta_t / mIterAux->GetDeltaLambda();
+            return res;
+        }
     };
 }
 
@@ -448,7 +454,8 @@ ExponentialRotADCZMIntegrator::ExponentialRotADCZMIntegrator(
     : ExponentialADCZMIntegrator( memo, sigmaMax, tauMax, deltaN, deltaT )
 {
     // x: u1x, u1y, u2x, u2y, du1x, du1y, du2x, du2y
-    potential = [this]( const autodiff::VectorXdual2nd& x, const int i ) {
+    potential = [this]( const autodiff::VectorXdual2nd& x, const int i )
+    {
         Eigen::Map<const autodiff::VectorXdual2nd> U1( x.data(), 2 );
         Eigen::Map<const autodiff::VectorXdual2nd> U2( x.data() + 2, 2 );
         Eigen::Map<const autodiff::VectorXdual2nd> dU1( x.data() + 4, 2 );
@@ -482,8 +489,8 @@ ExponentialRotADCZMIntegrator::ExponentialRotADCZMIntegrator(
                       autodiff::detail::exp( -DeltaT * DeltaT / mCZMLawConst.delta_t / mCZMLawConst.delta_t ) ) +
             xi_n * ( DeltaN - delta_data.delta_n_prev ) * ( DeltaN - delta_data.delta_n_prev ) / mCZMLawConst.delta_n /
                 mIterAux->GetDeltaLambda() +
-            xi_t * ( DeltaT - delta_data.delta_t_prev ) * ( DeltaT - delta_data.delta_t_prev ) / mCZMLawConst.delta_t /
-                mIterAux->GetDeltaLambda();
+            xi_t * ( DeltaT - delta_data.delta_t1_prev ) * ( DeltaT - delta_data.delta_t1_prev ) /
+                mCZMLawConst.delta_t / mIterAux->GetDeltaLambda();
         // autodiff::dual2nd res = mCZMLawConst.phi_n +
         //                         mCZMLawConst.phi_n * autodiff::detail::exp( -DeltaN / mCZMLawConst.delta_n ) *
         //                             ( ( 1. - r + DeltaN / mCZMLawConst.delta_n ) * ( 1. - q ) / ( r - 1. ) -
@@ -544,6 +551,30 @@ void ExponentialRotADCZMIntegrator::matrixB( const int dof1,
     else if ( dim == 3 )
     {
         std::cout << "not implemented!\n";
+    }
+}
+
+void DeltaToTNMat( const mfem::DenseMatrix& Jacobian, Eigen::MatrixXd& DeltaToTN )
+{
+    int dim = Jacobian.Height();
+    DeltaToTN.resize( dim, dim );
+    if ( dim == 2 )
+    {
+        Eigen::Map<const Eigen::Matrix<double, 2, 1>> Jac( Jacobian.Data() );
+        static Eigen::Rotation2Dd rot( EIGEN_PI / 2 );
+        DeltaToTN.col( 0 ) = Jac;
+        DeltaToTN.col( 0 ).normalize();
+        DeltaToTN.col( 1 ) = rot.toRotationMatrix() * DeltaToTN.col( 0 );
+    }
+    else if ( dim == 3 )
+    {
+        Eigen::Map<const Eigen::Matrix<double, 3, 2>> Jac( Jacobian.Data() );
+        DeltaToTN.col( 0 ) = Jac.col( 0 );
+        DeltaToTN.col( 0 ).normalize();
+        DeltaToTN.col( 2 ) = Jac.col( 1 ).cross( Jac.col( 0 ) );
+        DeltaToTN.col( 2 ).normalize();
+        Eigen::Map<const Eigen::Matrix<double, 3, 3>> DeltaToTN33( DeltaToTN.data() );
+        DeltaToTN.col( 1 ) = DeltaToTN33.col( 2 ).cross( DeltaToTN33.col( 0 ) );
     }
 }
 } // namespace plugin
