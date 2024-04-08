@@ -33,12 +33,6 @@ FetchContent_Declare(
   GIT_PROGRESS TRUE
 )
 
-# FetchContent_Declare(
-#   taco
-#   GIT_REPOSITORY https://github.com/tensor-compiler/taco.git
-#   GIT_TAG master
-# )
-
 set(BUILD_TESTING OFF)
 set(EIGEN_BUILD_DOC OFF)
 set(EIGEN_BUILD_PKGCONFIG OFF)
