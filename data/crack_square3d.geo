@@ -21,9 +21,7 @@ Curve Loop(1) = {1, 2, 3, 4, 5, 6, 7};
 Plane Surface(1) = {1};
 
 Extrude {0, 0, 1e-3}{ Surface {1}; }
-
-
-
+Physical Volume(1) = {1};
 
 Physical Surface("bot", 11) = {19};
 Physical Surface("top", 12) = {27};

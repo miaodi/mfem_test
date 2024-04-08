@@ -337,35 +337,17 @@ void ExponentialCZMIntegrator::TractionStiffTangent( const Eigen::VectorXd& Delt
 
 void ADCZMIntegrator::Traction( const Eigen::VectorXd& Delta, const int i, const int dim, Eigen::VectorXd& T ) const
 {
-    if ( dim == 2 )
-    {
-        autodiff::VectorXdual2nd delta( Delta );
-        autodiff::dual2nd u;
-        T = autodiff::gradient( potential, autodiff::wrt( delta ), autodiff::at( delta, i ), u );
-    }
-    else if ( dim == 3 )
-    {
-        mfem::mfem_error(
-            "ADCZMIntegrator::Traction\n"
-            "   is not implemented for this class." );
-    }
+    autodiff::VectorXdual2nd delta( Delta );
+    autodiff::dual2nd u;
+    T = autodiff::gradient( potential, autodiff::wrt( delta ), autodiff::at( delta, i ), u );
 }
 
 void ADCZMIntegrator::TractionStiffTangent( const Eigen::VectorXd& Delta, const int i, const int dim, Eigen::MatrixXd& H ) const
 {
-    if ( dim == 2 )
-    {
-        autodiff::VectorXdual2nd delta( Delta );
-        autodiff::dual2nd u;
-        autodiff::VectorXdual g;
-        H = autodiff::hessian( potential, autodiff::wrt( delta ), autodiff::at( delta, i ), u, g );
-    }
-    else if ( dim == 3 )
-    {
-        mfem::mfem_error(
-            "ADCZMIntegrator::Traction\n"
-            "   is not implemented for this class." );
-    }
+    autodiff::VectorXdual2nd delta( Delta );
+    autodiff::dual2nd u;
+    autodiff::VectorXdual g;
+    H = autodiff::hessian( potential, autodiff::wrt( delta ), autodiff::at( delta, i ), u, g );
 }
 
 void ExponentialADCZMIntegrator::EvalCZMLaw( mfem::ElementTransformation& Tr, const mfem::IntegrationPoint& ip )
@@ -379,11 +361,10 @@ void ExponentialADCZMIntegrator::EvalCZMLaw( mfem::ElementTransformation& Tr, co
 
 ExponentialADCZMIntegrator::ExponentialADCZMIntegrator(
     Memorize& memo, mfem::Coefficient& sigmaMax, mfem::Coefficient& tauMax, mfem::Coefficient& deltaN, mfem::Coefficient& deltaT )
-    : ADCZMIntegrator( memo ), mSigmaMax{ &sigmaMax }, mTauMax{ &tauMax }, mDeltaN{ &deltaN }, mDeltaT{ &deltaT }
+    : ADCZMIntegrator( memo ), mSigmaMax{&sigmaMax}, mTauMax{&tauMax}, mDeltaN{&deltaN}, mDeltaT{&deltaT}
 {
     // x: diffX, diffY
-    potential = [this]( const autodiff::VectorXdual2nd& x, const int i )
-    {
+    potential = [this]( const autodiff::VectorXdual2nd& x, const int i ) {
         const auto& Jacobian = this->mMemo.GetFaceJacobian( i );
         const int dim = Jacobian.Height();
         const auto& pd = this->mMemo.GetFacePointData( i );
@@ -454,8 +435,7 @@ ExponentialRotADCZMIntegrator::ExponentialRotADCZMIntegrator(
     : ExponentialADCZMIntegrator( memo, sigmaMax, tauMax, deltaN, deltaT )
 {
     // x: u1x, u1y, u2x, u2y, du1x, du1y, du2x, du2y
-    potential = [this]( const autodiff::VectorXdual2nd& x, const int i )
-    {
+    potential = [this]( const autodiff::VectorXdual2nd& x, const int i ) {
         Eigen::Map<const autodiff::VectorXdual2nd> U1( x.data(), 2 );
         Eigen::Map<const autodiff::VectorXdual2nd> U2( x.data() + 2, 2 );
         Eigen::Map<const autodiff::VectorXdual2nd> dU1( x.data() + 4, 2 );

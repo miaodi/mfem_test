@@ -17,7 +17,7 @@ int main( int argc, char* argv[] )
     Hypre::Init();
 
     // 1. Parse command-line options.
-    const char* mesh_file = "../../data/crack_square2d.msh";
+    const char* mesh_file = "../../data/crack_square3d.msh";
     int order = 1;
     bool static_cond = false;
     bool visualization = 1;
@@ -87,7 +87,7 @@ int main( int argc, char* argv[] )
         Array<Refinement> refinements;
         for ( int i = 0; i < ne; i++ )
         {
-            double* node{ nullptr };
+            double* node{nullptr};
             for ( int j = 0; j < eles[i]->GetNVertices(); j++ )
             {
                 const int vi = eles[i]->GetVertices()[j];
@@ -202,43 +202,41 @@ int main( int argc, char* argv[] )
         activeBC( 10 ) = 1e16;
         activeBC( 11 ) = 1e16;
         static VectorArrayCoefficient hevi( dim );
-        hevi.Set( 0, new PWConstCoefficient( activeBC ) );
-        hevi.Set( 1, new PWConstCoefficient( activeBC ) );
+        for ( int i = 0; i < dim; i++ )
+            hevi.Set( i, new PWConstCoefficient( activeBC ) );
         nlf->AddBdrFaceIntegrator( new plugin::NonlinearDirichletPenaltyIntegrator( d, hevi ) );
     }
 
-    mfem::FunctionCoefficient sigma_max{ []( const mfem::Vector& x )
-                                         {
-                                             if ( std::sqrt( std::pow( x( 0 ) - .00025, 2 ) + std::pow( x( 1 ), 2 ) ) <= .0001 )
-                                             {
-                                                 return 324E6 * 5;
-                                             }
-                                             else
-                                             {
-                                                 return 324E6;
-                                             }
-                                         } };
-    mfem::FunctionCoefficient tau_max{ []( const mfem::Vector& x )
-                                       {
-                                           if ( std::sqrt( std::pow( x( 0 ) - .00025, 2 ) + std::pow( x( 1 ), 2 ) ) <= .0001 )
-                                           {
-                                               return 755.4E6 * 5;
-                                           }
-                                           else
-                                           {
-                                               return 755.4E6;
-                                           }
-                                       } };
-    mfem::ConstantCoefficient delta_n{ 4E-7 };
-    mfem::ConstantCoefficient delta_t{ 4E-7 };
+    mfem::FunctionCoefficient sigma_max{[]( const mfem::Vector& x ) {
+        if ( std::sqrt( std::pow( x( 0 ) - .00025, 2 ) + std::pow( x( 1 ), 2 ) ) <= .0001 )
+        {
+            return 324E6 * 5;
+        }
+        else
+        {
+            return 324E6;
+        }
+    }};
+    mfem::FunctionCoefficient tau_max{[]( const mfem::Vector& x ) {
+        if ( std::sqrt( std::pow( x( 0 ) - .00025, 2 ) + std::pow( x( 1 ), 2 ) ) <= .0001 )
+        {
+            return 755.4E6 * 5;
+        }
+        else
+        {
+            return 755.4E6;
+        }
+    }};
+    mfem::ConstantCoefficient delta_n{4E-7};
+    mfem::ConstantCoefficient delta_t{4E-7};
 
     auto czm_intg = new plugin::ExponentialADCZMIntegrator( mm, sigma_max, tau_max, delta_n, delta_t );
     nlf->AddInteriorFaceIntegrator( czm_intg );
-    mfem::IntegrationRules GLIntRules( 0, mfem::Quadrature1D::GaussLobatto );
-    czm_intg->SetIntRule( &GLIntRules.Get( mfem::Geometry::SEGMENT, -1 ) );
+    // mfem::IntegrationRules GLIntRules( 0, mfem::Quadrature1D::GaussLobatto );
+    // czm_intg->SetIntRule( &GLIntRules.Get( mfem::Geometry::SEGMENT, -1 ) );
 
     // Set up the Jacobian solver
-    mfem::Solver* lin_solver{ nullptr };
+    mfem::Solver* lin_solver{nullptr};
 
     // {
     //     auto cg  = new mfem::CGSolver( MPI_COMM_WORLD );
@@ -271,7 +269,7 @@ int main( int argc, char* argv[] )
         mumps->SetMatrixSymType( MUMPSSolver::MatType::UNSYMMETRIC );
         // mumps->SetReorderingStrategy( MUMPSSolver::ReorderingStrategy::PARMETIS );
         mumps->SetPrintLevel( -1 );
-        mumps->SetDetComp( true );
+        mumps->SetDetComp( false );
         lin_solver = mumps;
     }
     // {
@@ -286,7 +284,7 @@ int main( int argc, char* argv[] )
     newton_solver->SetSolver( *lin_solver );
     newton_solver->SetOperator( *nlf );
     newton_solver->SetPrintLevel( -1 );
-    newton_solver->SetRelTol( 1e-4 );
+    newton_solver->SetRelTol( 1e-5 );
     newton_solver->SetAbsTol( 0 );
     newton_solver->SetMaxIter( 10 );
     newton_solver->SetPrintLevel( 0 );
@@ -323,8 +321,7 @@ int main( int argc, char* argv[] )
     stress_grid.ProjectCoefficient( sc );
     paraview_dc.Save();
 
-    std::function<void( int, int, double )> func = [&paraview_dc, &stress_grid, &sc, &x_gf, &u]( int step, int count, double time )
-    {
+    std::function<void( int, int, double )> func = [&paraview_dc, &stress_grid, &sc, &x_gf, &u]( int step, int count, double time ) {
         static int local_counter = 0;
         if ( count % 5 == 0 )
         {
