@@ -14,6 +14,20 @@ namespace plugin
 {
 class Memorize;
 
+struct ExponentialCZMConst
+{
+    void update_phi()
+    {
+        phi_n = std::exp( 1. ) * sigma_max * delta_n;
+        phi_t = std::sqrt( std::exp( 1. ) / 2 ) * tau_max * delta_t;
+    }
+    double sigma_max{0};
+    double tau_max{0};
+    double delta_n{0};
+    double delta_t{0};
+    double phi_n{0};
+    double phi_t{0};
+};
 class CZMIntegrator : public NonlinearFormIntegratorLambda
 {
 protected:
@@ -23,13 +37,13 @@ protected:
             : delta_n_prev( delta_n ), delta_t1_prev( delta_t1 ), delta_t2_prev( delta_t2 )
         {
         }
-        double delta_n_prev{ 0. };
-        double delta_t1_prev{ 0. };
-        double delta_t2_prev{ 0. };
+        double delta_n_prev{0.};
+        double delta_t1_prev{0.};
+        double delta_t2_prev{0.};
     };
 
 public:
-    CZMIntegrator( Memorize& memo ) : NonlinearFormIntegratorLambda(), mMemo{ memo }
+    CZMIntegrator( Memorize& memo ) : NonlinearFormIntegratorLambda(), mMemo{memo}
     {
     }
 
@@ -63,7 +77,7 @@ public:
     }
 
 protected:
-    void Update( const int gauss, const double delta_n, const double delta_t1, const double delta_t2 = 0. );
+    void Update( const int gauss, const double delta_n, const double delta_t1, const double delta_t2 = 0. ) const;
 
 protected:
     Memorize& mMemo;
@@ -98,42 +112,39 @@ public:
     virtual void TractionStiffTangent( const Eigen::VectorXd& Delta, const int gauss, const int dim, Eigen::MatrixXd& H ) const;
 
 protected:
-    double mDeltaNMax{ 0. };
-    double mDeltaTMax{ 0. };
-    double mPhiN{ 0. };
-    double mPhiT{ 0. };
-    double mDeltaN{ 0. };
-    double mDeltaT{ 0. };
-    double mSigmaMax{ 0. };
-    double mTauMax{ 0. };
+    double mDeltaNMax{0.};
+    double mDeltaTMax{0.};
+    double mPhiN{0.};
+    double mPhiT{0.};
+    double mDeltaN{0.};
+    double mDeltaT{0.};
+    double mSigmaMax{0.};
+    double mTauMax{0.};
 };
 
 class ExponentialCZMIntegrator : public CZMIntegrator
 {
 public:
-    ExponentialCZMIntegrator( Memorize& memo, const double sigmaMax, const double tauMax, const double deltaN, const double deltaT )
-        : CZMIntegrator( memo ),
-          mSigmaMax{ sigmaMax },
-          mTauMax{ tauMax },
-          mDeltaN{ deltaN },
-          mDeltaT{ deltaT },
-          mPhiN{ std::exp( 1. ) * sigmaMax * deltaN },
-          mPhiT{ std::sqrt( std::exp( 1. ) / 2 ) * tauMax * deltaT }
+    ExponentialCZMIntegrator( Memorize& memo, mfem::Coefficient& sigmaMax, mfem::Coefficient& tauMax, mfem::Coefficient& deltaN, mfem::Coefficient& deltaT )
+        : CZMIntegrator( memo ), mSigmaMax( &sigmaMax ), mTauMax( &tauMax ), mDeltaN( &deltaN ), mDeltaT( &deltaT )
     {
     }
+
+    virtual void EvalCZMLaw( mfem::ElementTransformation& Tr, const mfem::IntegrationPoint& ip ) override;
 
     virtual void Traction( const Eigen::VectorXd& Delta, const int gauss, const int dim, Eigen::VectorXd& T ) const;
 
     virtual void TractionStiffTangent( const Eigen::VectorXd& Delta, const int gauss, const int dim, Eigen::MatrixXd& H ) const;
 
 protected:
+    mfem::Coefficient* mSigmaMax{nullptr};
+    mfem::Coefficient* mTauMax{nullptr};
+    mfem::Coefficient* mDeltaN{nullptr};
+    mfem::Coefficient* mDeltaT{nullptr};
+    ExponentialCZMConst mCZMLawConst;
 
-    double mSigmaMax{ 0. };
-    double mTauMax{ 0. };
-    double mDeltaN{ 0. };
-    double mDeltaT{ 0. };
-    double mPhiN{ 0. };
-    double mPhiT{ 0. };
+    double xi_n{0};
+    double xi_t{0};
 };
 
 class ADCZMIntegrator : public CZMIntegrator
@@ -153,22 +164,6 @@ protected:
 
 class ExponentialADCZMIntegrator : public ADCZMIntegrator
 {
-protected:
-    struct ExponentialCZMConst
-    {
-        void update_phi()
-        {
-            phi_n = std::exp( 1. ) * sigma_max * delta_n;
-            phi_t = std::sqrt( std::exp( 1. ) / 2 ) * tau_max * delta_t;
-        }
-        double sigma_max{ 0 };
-        double tau_max{ 0 };
-        double delta_n{ 0 };
-        double delta_t{ 0 };
-        double phi_n{ 0 };
-        double phi_t{ 0 };
-    };
-
 public:
     ExponentialADCZMIntegrator( Memorize& memo,
                                 mfem::Coefficient& sigmaMax,
@@ -179,15 +174,15 @@ public:
     virtual void EvalCZMLaw( mfem::ElementTransformation& Tr, const mfem::IntegrationPoint& ip ) override;
 
 protected:
-    mfem::Coefficient* mSigmaMax{ nullptr };
-    mfem::Coefficient* mTauMax{ nullptr };
-    mfem::Coefficient* mDeltaN{ nullptr };
-    mfem::Coefficient* mDeltaT{ nullptr };
+    mfem::Coefficient* mSigmaMax{nullptr};
+    mfem::Coefficient* mTauMax{nullptr};
+    mfem::Coefficient* mDeltaN{nullptr};
+    mfem::Coefficient* mDeltaT{nullptr};
 
     ExponentialCZMConst mCZMLawConst;
 
-    double xi_n{ 1e2 };
-    double xi_t{ 1e2 };
+    double xi_n{0};
+    double xi_t{0};
 };
 
 // class OrtizIrreversibleADCZMIntegrator : public ADCZMIntegrator

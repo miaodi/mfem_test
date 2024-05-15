@@ -129,7 +129,7 @@ void CZMIntegrator::matrixB( const int dof1,
     }
 }
 
-void CZMIntegrator::Update( const int gauss, const double delta_n, const double delta_t1, const double delta_t2 )
+void CZMIntegrator::Update( const int gauss, const double delta_n, const double delta_t1, const double delta_t2 ) const
 {
     auto& pd = mMemo.GetFacePointData( gauss );
     // historical strain energy+ for KKT condition
@@ -221,116 +221,165 @@ void LinearCZMIntegrator::TractionStiffTangent( const Eigen::VectorXd& Delta, co
     }
 }
 
+void ExponentialCZMIntegrator::EvalCZMLaw( mfem::ElementTransformation& Tr, const mfem::IntegrationPoint& ip )
+{
+    mCZMLawConst.sigma_max = mSigmaMax->Eval( Tr, ip );
+    mCZMLawConst.tau_max = mTauMax->Eval( Tr, ip );
+    mCZMLawConst.delta_n = mDeltaN->Eval( Tr, ip );
+    mCZMLawConst.delta_t = mDeltaT->Eval( Tr, ip );
+    mCZMLawConst.update_phi();
+}
+
 void ExponentialCZMIntegrator::Traction( const Eigen::VectorXd& Delta, const int i, const int dim, Eigen::VectorXd& T ) const
 {
-    double q = mPhiT / mPhiN;
+    double q = mCZMLawConst.phi_t / mCZMLawConst.phi_n;
     double r = 0.;
     Eigen::MatrixXd DeltaToTN;
     DeltaToTNMat( mMemo.GetFaceJacobian( i ), DeltaToTN );
     Eigen::VectorXd DeltaRot = DeltaToTN.transpose() * Delta;
+
+    const auto& pd = this->mMemo.GetFacePointData( i );
+
+    if ( mIterAux->IterNumber() == 0 )
+    {
+        Update( i, DeltaRot( 0 ), DeltaRot( 1 ), dim == 3 ? DeltaRot( 2 ) : 0. );
+    }
+    const auto& delta_data = pd.get_val<PointData>( "delta" ).value().get();
     if ( dim == 2 )
     {
         T.resize( 2 );
         // Tt
-        T( 0 ) = 2 * DeltaRot( 0 ) * exp( -DeltaRot( 1 ) / mDeltaN - DeltaRot( 0 ) * DeltaRot( 0 ) / mDeltaT / mDeltaT ) *
-                 mPhiN * ( q + DeltaRot( 1 ) * ( r - q ) / mDeltaN / ( r - 1 ) ) / mDeltaT / mDeltaT;
+        T( 0 ) = 2 * DeltaRot( 0 ) *
+                     exp( -DeltaRot( 1 ) / mCZMLawConst.delta_n -
+                          DeltaRot( 0 ) * DeltaRot( 0 ) / mCZMLawConst.delta_t / mCZMLawConst.delta_t ) *
+                     mCZMLawConst.phi_n * ( q + DeltaRot( 1 ) * ( r - q ) / mCZMLawConst.delta_n / ( r - 1 ) ) /
+                     mCZMLawConst.delta_t / mCZMLawConst.delta_t +
+                 2 * xi_t * ( DeltaRot( 0 ) - delta_data.delta_t1_prev ) / mCZMLawConst.delta_t / mIterAux->GetDeltaLambda();
         // Tn
-        T( 1 ) = mPhiN / mDeltaN * exp( -DeltaRot( 1 ) / mDeltaN ) *
-                 ( DeltaRot( 1 ) / mDeltaN * exp( -DeltaRot( 0 ) * DeltaRot( 0 ) / mDeltaT / mDeltaT ) +
-                   ( 1 - q ) / ( r - 1 ) * ( 1 - exp( -DeltaRot( 0 ) * DeltaRot( 0 ) / mDeltaT / mDeltaT ) ) *
-                       ( r - DeltaRot( 1 ) / mDeltaN ) );
+        T( 1 ) = mCZMLawConst.phi_n / mCZMLawConst.delta_n * exp( -DeltaRot( 1 ) / mCZMLawConst.delta_n ) *
+                     ( DeltaRot( 1 ) / mCZMLawConst.delta_n *
+                           exp( -DeltaRot( 0 ) * DeltaRot( 0 ) / mCZMLawConst.delta_t / mCZMLawConst.delta_t ) +
+                       ( 1 - q ) / ( r - 1 ) *
+                           ( 1 - exp( -DeltaRot( 0 ) * DeltaRot( 0 ) / mCZMLawConst.delta_t / mCZMLawConst.delta_t ) ) *
+                           ( r - DeltaRot( 1 ) / mCZMLawConst.delta_n ) ) +
+                 2 * xi_n * ( DeltaRot( 1 ) - delta_data.delta_n_prev ) / mCZMLawConst.delta_n / mIterAux->GetDeltaLambda();
     }
     else if ( dim == 3 )
     {
         T.resize( 3 );
         // Tt1
         T( 0 ) = ( 2 * DeltaRot( 0 ) *
-                   exp( -( DeltaRot( 2 ) / mDeltaN ) - ( pow( DeltaRot( 0 ), 2 ) + pow( DeltaRot( 1 ), 2 ) ) / pow( mDeltaT, 2 ) ) *
-                   mPhiN * ( q + ( DeltaRot( 2 ) * ( r - q ) ) / ( mDeltaN * ( r - 1 ) ) ) ) /
-                 pow( mDeltaT, 2 );
+                   exp( -( DeltaRot( 2 ) / mCZMLawConst.delta_n ) -
+                        ( pow( DeltaRot( 0 ), 2 ) + pow( DeltaRot( 1 ), 2 ) ) / pow( mCZMLawConst.delta_t, 2 ) ) *
+                   mCZMLawConst.phi_n * ( q + ( DeltaRot( 2 ) * ( r - q ) ) / ( mCZMLawConst.delta_n * ( r - 1 ) ) ) ) /
+                 pow( mCZMLawConst.delta_t, 2 );
         // Tt2
         T( 1 ) = ( 2 * DeltaRot( 1 ) *
-                   exp( -( DeltaRot( 2 ) / mDeltaN ) - ( pow( DeltaRot( 0 ), 2 ) + pow( DeltaRot( 1 ), 2 ) ) / pow( mDeltaT, 2 ) ) *
-                   mPhiN * ( q + ( DeltaRot( 2 ) * ( r - q ) ) / ( mDeltaN * ( r - 1 ) ) ) ) /
-                 pow( mDeltaT, 2 );
+                   exp( -( DeltaRot( 2 ) / mCZMLawConst.delta_n ) -
+                        ( pow( DeltaRot( 0 ), 2 ) + pow( DeltaRot( 1 ), 2 ) ) / pow( mCZMLawConst.delta_t, 2 ) ) *
+                   mCZMLawConst.phi_n * ( q + ( DeltaRot( 2 ) * ( r - q ) ) / ( mCZMLawConst.delta_n * ( r - 1 ) ) ) ) /
+                 pow( mCZMLawConst.delta_t, 2 );
         // Tn
         T( 2 ) =
-            ( exp( -( DeltaRot( 2 ) / mDeltaN ) - ( pow( DeltaRot( 0 ), 2 ) + pow( DeltaRot( 1 ), 2 ) ) / pow( mDeltaT, 2 ) ) * mPhiN *
-              ( -( mDeltaN * ( -1 + exp( ( pow( DeltaRot( 0 ), 2 ) + pow( DeltaRot( 1 ), 2 ) ) / pow( mDeltaT, 2 ) ) ) * ( -1 + q ) * r ) +
+            ( exp( -( DeltaRot( 2 ) / mCZMLawConst.delta_n ) -
+                   ( pow( DeltaRot( 0 ), 2 ) + pow( DeltaRot( 1 ), 2 ) ) / pow( mCZMLawConst.delta_t, 2 ) ) *
+              mCZMLawConst.phi_n *
+              ( -( mCZMLawConst.delta_n *
+                   ( -1 + exp( ( pow( DeltaRot( 0 ), 2 ) + pow( DeltaRot( 1 ), 2 ) ) / pow( mCZMLawConst.delta_t, 2 ) ) ) *
+                   ( -1 + q ) * r ) +
                 DeltaRot( 2 ) *
-                    ( exp( ( pow( DeltaRot( 0 ), 2 ) + pow( DeltaRot( 1 ), 2 ) ) / pow( mDeltaT, 2 ) ) * ( -1 + q ) - q + r ) ) ) /
-            ( pow( mDeltaN, 2 ) * ( -1 + r ) );
+                    ( exp( ( pow( DeltaRot( 0 ), 2 ) + pow( DeltaRot( 1 ), 2 ) ) / pow( mCZMLawConst.delta_t, 2 ) ) * ( -1 + q ) -
+                      q + r ) ) ) /
+            ( pow( mCZMLawConst.delta_n, 2 ) * ( -1 + r ) );
     }
     T = DeltaToTN * T;
 }
 
 void ExponentialCZMIntegrator::TractionStiffTangent( const Eigen::VectorXd& Delta, const int i, const int dim, Eigen::MatrixXd& H ) const
 {
-    double q = mPhiT / mPhiN;
+    double q = mCZMLawConst.phi_t / mCZMLawConst.phi_n;
     double r = 0.;
     Eigen::MatrixXd DeltaToTN;
     DeltaToTNMat( mMemo.GetFaceJacobian( i ), DeltaToTN );
     Eigen::VectorXd DeltaRot = DeltaToTN.transpose() * Delta;
+
+    if ( mIterAux->IterNumber() == 0 )
+    {
+        Update( i, DeltaRot( 0 ), DeltaRot( 1 ), dim == 3 ? DeltaRot( 2 ) : 0. );
+    }
+
     if ( dim == 2 )
     {
         H.resize( 2, 2 );
         // Ttt
-        H( 0, 0 ) = 2 * ( std::pow( mDeltaT, 2 ) - 2 * std::pow( DeltaRot( 0 ), 2 ) ) *
-                    exp( -DeltaRot( 1 ) / mDeltaN - std::pow( DeltaRot( 0 ), 2 ) / std::pow( mDeltaT, 2 ) ) * mPhiN *
-                    ( mDeltaN * q * ( r - 1 ) + DeltaRot( 1 ) * ( r - q ) ) / mDeltaN / std::pow( mDeltaT, 4 ) / ( r - 1 );
+        H( 0, 0 ) = 2 * ( std::pow( mCZMLawConst.delta_t, 2 ) - 2 * std::pow( DeltaRot( 0 ), 2 ) ) *
+                        exp( -DeltaRot( 1 ) / mCZMLawConst.delta_n -
+                             std::pow( DeltaRot( 0 ), 2 ) / std::pow( mCZMLawConst.delta_t, 2 ) ) *
+                        mCZMLawConst.phi_n * ( mCZMLawConst.delta_n * q * ( r - 1 ) + DeltaRot( 1 ) * ( r - q ) ) /
+                        mCZMLawConst.delta_n / std::pow( mCZMLawConst.delta_t, 4 ) / ( r - 1 ) +
+                    2 * xi_t / mCZMLawConst.delta_t / mIterAux->GetDeltaLambda();
         // Tnn
         H( 1, 1 ) =
-            exp( -DeltaRot( 1 ) / mDeltaN - std::pow( DeltaRot( 0 ), 2 ) / std::pow( mDeltaT, 2 ) ) * mPhiN *
-            ( mDeltaN * ( 2 * r - q - q * r + exp( DeltaRot( 0 ) * DeltaRot( 0 ) / mDeltaT / mDeltaT ) * ( q - 1 ) * ( r + 1 ) ) -
-              DeltaRot( 1 ) * ( exp( DeltaRot( 0 ) * DeltaRot( 0 ) / mDeltaT / mDeltaT ) * ( q - 1 ) - q + r ) ) /
-            std::pow( mDeltaN, 3 ) / ( r - 1 );
+            exp( -DeltaRot( 1 ) / mCZMLawConst.delta_n - std::pow( DeltaRot( 0 ), 2 ) / std::pow( mCZMLawConst.delta_t, 2 ) ) *
+                mCZMLawConst.phi_n *
+                ( mCZMLawConst.delta_n * ( 2 * r - q - q * r +
+                                           exp( DeltaRot( 0 ) * DeltaRot( 0 ) / mCZMLawConst.delta_t / mCZMLawConst.delta_t ) *
+                                               ( q - 1 ) * ( r + 1 ) ) -
+                  DeltaRot( 1 ) *
+                      ( exp( DeltaRot( 0 ) * DeltaRot( 0 ) / mCZMLawConst.delta_t / mCZMLawConst.delta_t ) * ( q - 1 ) - q + r ) ) /
+                std::pow( mCZMLawConst.delta_n, 3 ) / ( r - 1 ) +
+            2 * xi_n / mCZMLawConst.delta_n / mIterAux->GetDeltaLambda();
         // Tnt
-        H( 0, 1 ) = 2 * DeltaRot( 0 ) *
-                    exp( -DeltaRot( 1 ) / mDeltaN - std::pow( DeltaRot( 0 ), 2 ) / std::pow( mDeltaT, 2 ) ) * mPhiN *
-                    ( DeltaRot( 1 ) * ( q - r ) - mDeltaN * ( q - 1 ) * r ) / std::pow( mDeltaN * mDeltaT, 2 ) / ( r - 1 );
+        H( 0, 1 ) =
+            2 * DeltaRot( 0 ) *
+            exp( -DeltaRot( 1 ) / mCZMLawConst.delta_n - std::pow( DeltaRot( 0 ), 2 ) / std::pow( mCZMLawConst.delta_t, 2 ) ) *
+            mCZMLawConst.phi_n * ( DeltaRot( 1 ) * ( q - r ) - mCZMLawConst.delta_n * ( q - 1 ) * r ) /
+            std::pow( mCZMLawConst.delta_n * mCZMLawConst.delta_t, 2 ) / ( r - 1 );
     }
     else if ( dim == 3 )
     {
         H.resize( 3, 3 );
         // Tt1t1
-        H( 0, 0 ) =
-            ( 2 * ( pow( mDeltaT, 2 ) - 2 * pow( DeltaRot( 0 ), 2 ) ) *
-              exp( -( DeltaRot( 2 ) / mDeltaN ) - ( pow( DeltaRot( 0 ), 2 ) + pow( DeltaRot( 1 ), 2 ) ) / pow( mDeltaT, 2 ) ) *
-              mPhiN * ( mDeltaN * q * ( -1 + r ) + DeltaRot( 2 ) * ( -q + r ) ) ) /
-            ( mDeltaN * pow( mDeltaT, 4 ) * ( -1 + r ) );
+        H( 0, 0 ) = ( 2 * ( pow( mCZMLawConst.delta_t, 2 ) - 2 * pow( DeltaRot( 0 ), 2 ) ) *
+                      exp( -( DeltaRot( 2 ) / mCZMLawConst.delta_n ) -
+                           ( pow( DeltaRot( 0 ), 2 ) + pow( DeltaRot( 1 ), 2 ) ) / pow( mCZMLawConst.delta_t, 2 ) ) *
+                      mCZMLawConst.phi_n * ( mCZMLawConst.delta_n * q * ( -1 + r ) + DeltaRot( 2 ) * ( -q + r ) ) ) /
+                    ( mCZMLawConst.delta_n * pow( mCZMLawConst.delta_t, 4 ) * ( -1 + r ) );
         // Tt2t2
-        H( 1, 1 ) =
-            ( 2 * ( pow( mDeltaT, 2 ) - 2 * pow( DeltaRot( 1 ), 2 ) ) *
-              exp( -( DeltaRot( 2 ) / mDeltaN ) - ( pow( DeltaRot( 0 ), 2 ) + pow( DeltaRot( 1 ), 2 ) ) / pow( mDeltaT, 2 ) ) *
-              mPhiN * ( mDeltaN * q * ( -1 + r ) + DeltaRot( 2 ) * ( -q + r ) ) ) /
-            ( mDeltaN * pow( mDeltaT, 4 ) * ( -1 + r ) );
+        H( 1, 1 ) = ( 2 * ( pow( mCZMLawConst.delta_t, 2 ) - 2 * pow( DeltaRot( 1 ), 2 ) ) *
+                      exp( -( DeltaRot( 2 ) / mCZMLawConst.delta_n ) -
+                           ( pow( DeltaRot( 0 ), 2 ) + pow( DeltaRot( 1 ), 2 ) ) / pow( mCZMLawConst.delta_t, 2 ) ) *
+                      mCZMLawConst.phi_n * ( mCZMLawConst.delta_n * q * ( -1 + r ) + DeltaRot( 2 ) * ( -q + r ) ) ) /
+                    ( mCZMLawConst.delta_n * pow( mCZMLawConst.delta_t, 4 ) * ( -1 + r ) );
         // Tnn
         H( 2, 2 ) =
-            ( exp( -( DeltaRot( 2 ) / mDeltaN ) - ( pow( DeltaRot( 0 ), 2 ) + pow( DeltaRot( 1 ), 2 ) ) / pow( mDeltaT, 2 ) ) * mPhiN *
+            ( exp( -( DeltaRot( 2 ) / mCZMLawConst.delta_n ) -
+                   ( pow( DeltaRot( 0 ), 2 ) + pow( DeltaRot( 1 ), 2 ) ) / pow( mCZMLawConst.delta_t, 2 ) ) *
+              mCZMLawConst.phi_n *
               ( -( DeltaRot( 2 ) *
-                   ( exp( ( pow( DeltaRot( 0 ), 2 ) + pow( DeltaRot( 1 ), 2 ) ) / pow( mDeltaT, 2 ) ) * ( -1 + q ) - q + r ) ) +
-                mDeltaN * ( -q + 2 * r - q * r +
-                            exp( ( pow( DeltaRot( 0 ), 2 ) + pow( DeltaRot( 1 ), 2 ) ) / pow( mDeltaT, 2 ) ) *
-                                ( -1 + q ) * ( 1 + r ) ) ) ) /
-            ( pow( mDeltaN, 3 ) * ( -1 + r ) );
+                   ( exp( ( pow( DeltaRot( 0 ), 2 ) + pow( DeltaRot( 1 ), 2 ) ) / pow( mCZMLawConst.delta_t, 2 ) ) * ( -1 + q ) - q + r ) ) +
+                mCZMLawConst.delta_n * ( -q + 2 * r - q * r +
+                                         exp( ( pow( DeltaRot( 0 ), 2 ) + pow( DeltaRot( 1 ), 2 ) ) / pow( mCZMLawConst.delta_t, 2 ) ) *
+                                             ( -1 + q ) * ( 1 + r ) ) ) ) /
+            ( pow( mCZMLawConst.delta_n, 3 ) * ( -1 + r ) );
         // Tt1t2
-        H( 0, 1 ) =
-            ( -4 * DeltaRot( 0 ) * DeltaRot( 1 ) *
-              exp( -( DeltaRot( 2 ) / mDeltaN ) - ( pow( DeltaRot( 0 ), 2 ) + pow( DeltaRot( 1 ), 2 ) ) / pow( mDeltaT, 2 ) ) *
-              mPhiN * ( q + ( DeltaRot( 2 ) * ( -q + r ) ) / ( mDeltaN * ( -1 + r ) ) ) ) /
-            pow( mDeltaT, 4 );
+        H( 0, 1 ) = ( -4 * DeltaRot( 0 ) * DeltaRot( 1 ) *
+                      exp( -( DeltaRot( 2 ) / mCZMLawConst.delta_n ) -
+                           ( pow( DeltaRot( 0 ), 2 ) + pow( DeltaRot( 1 ), 2 ) ) / pow( mCZMLawConst.delta_t, 2 ) ) *
+                      mCZMLawConst.phi_n * ( q + ( DeltaRot( 2 ) * ( -q + r ) ) / ( mCZMLawConst.delta_n * ( -1 + r ) ) ) ) /
+                    pow( mCZMLawConst.delta_t, 4 );
         // Tt1n
-        H( 0, 2 ) =
-            ( 2 * DeltaRot( 0 ) *
-              exp( -( DeltaRot( 2 ) / mDeltaN ) - ( pow( DeltaRot( 0 ), 2 ) + pow( DeltaRot( 1 ), 2 ) ) / pow( mDeltaT, 2 ) ) *
-              mPhiN * ( DeltaRot( 2 ) * ( q - r ) - mDeltaN * ( -1 + q ) * r ) ) /
-            ( pow( mDeltaN, 2 ) * pow( mDeltaT, 2 ) * ( -1 + r ) );
+        H( 0, 2 ) = ( 2 * DeltaRot( 0 ) *
+                      exp( -( DeltaRot( 2 ) / mCZMLawConst.delta_n ) -
+                           ( pow( DeltaRot( 0 ), 2 ) + pow( DeltaRot( 1 ), 2 ) ) / pow( mCZMLawConst.delta_t, 2 ) ) *
+                      mCZMLawConst.phi_n * ( DeltaRot( 2 ) * ( q - r ) - mCZMLawConst.delta_n * ( -1 + q ) * r ) ) /
+                    ( pow( mCZMLawConst.delta_n, 2 ) * pow( mCZMLawConst.delta_t, 2 ) * ( -1 + r ) );
         // Tt2n
-        H( 1, 2 ) =
-            ( 2 * DeltaRot( 1 ) *
-              exp( -( DeltaRot( 2 ) / mDeltaN ) - ( pow( DeltaRot( 0 ), 2 ) + pow( DeltaRot( 1 ), 2 ) ) / pow( mDeltaT, 2 ) ) *
-              mPhiN * ( DeltaRot( 2 ) * ( q - r ) - mDeltaN * ( -1 + q ) * r ) ) /
-            ( pow( mDeltaN, 2 ) * pow( mDeltaT, 2 ) * ( -1 + r ) );
+        H( 1, 2 ) = ( 2 * DeltaRot( 1 ) *
+                      exp( -( DeltaRot( 2 ) / mCZMLawConst.delta_n ) -
+                           ( pow( DeltaRot( 0 ), 2 ) + pow( DeltaRot( 1 ), 2 ) ) / pow( mCZMLawConst.delta_t, 2 ) ) *
+                      mCZMLawConst.phi_n * ( DeltaRot( 2 ) * ( q - r ) - mCZMLawConst.delta_n * ( -1 + q ) * r ) ) /
+                    ( pow( mCZMLawConst.delta_n, 2 ) * pow( mCZMLawConst.delta_t, 2 ) * ( -1 + r ) );
     }
     H = DeltaToTN * H * DeltaToTN.transpose();
 }
@@ -369,8 +418,8 @@ ExponentialADCZMIntegrator::ExponentialADCZMIntegrator(
         const int dim = Jacobian.Height();
         const auto& pd = this->mMemo.GetFacePointData( i );
 
-        const autodiff::dual2nd q = mCZMLawConst.phi_t / mCZMLawConst.phi_n;
-        const autodiff::dual2nd r = 0.;
+        const double q = mCZMLawConst.phi_t / mCZMLawConst.phi_n;
+        const double r = 0.;
         Eigen::MatrixXd DeltaToTN;
         DeltaToTNMat( Jacobian, DeltaToTN );
 
@@ -389,9 +438,8 @@ ExponentialADCZMIntegrator::ExponentialADCZMIntegrator(
             autodiff::dual2nd res =
                 mCZMLawConst.phi_n +
                 mCZMLawConst.phi_n * autodiff::detail::exp( -DeltaN / mCZMLawConst.delta_n ) *
-                    ( ( autodiff::dual2nd( 1. ) - r + DeltaN / mCZMLawConst.delta_n ) *
-                          ( autodiff::dual2nd( 1. ) - q ) / ( r - autodiff::dual2nd( 1. ) ) -
-                      ( q + ( r - q ) / ( r - autodiff::dual2nd( 1. ) ) * DeltaN / mCZMLawConst.delta_n ) *
+                    ( ( 1. - r + DeltaN / mCZMLawConst.delta_n ) * ( 1. - q ) / ( r - 1. ) -
+                      ( q + ( r - q ) / ( r - 1. ) * DeltaN / mCZMLawConst.delta_n ) *
                           autodiff::detail::exp( -DeltaT * DeltaT / mCZMLawConst.delta_t / mCZMLawConst.delta_t ) ) +
                 xi_n * ( DeltaN - delta_data.delta_n_prev ) * ( DeltaN - delta_data.delta_n_prev ) /
                     mCZMLawConst.delta_n / mIterAux->GetDeltaLambda() +
